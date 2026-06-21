@@ -231,14 +231,74 @@ function applyTransforms(noTransition) {
   });
 }
 
+function mountCards() {
+  cardList().forEach((card) => {
+    if (!card) return;
+    if (card.style.visibility === 'hidden') {
+      card.remove();
+    }
+  });
+
+  if (cards.prev?.style.visibility !== 'hidden' && cards.prev) {
+    track.insertBefore(cards.prev, cards.active);
+  }
+  if (cards.active && !cards.active.isConnected) {
+    track.appendChild(cards.active);
+  }
+  if (cards.next?.style.visibility !== 'hidden' && cards.next) {
+    track.appendChild(cards.next);
+  }
+}
+
 function refreshCards() {
   fillCard(cards.prev, currentIndex - 1);
   fillCard(cards.active, currentIndex);
   fillCard(cards.next, currentIndex + 1);
+  mountCards();
   applyTransforms(true);
   updateUI();
   preloadAdjacent();
   requestAnimationFrame(() => applyTransforms(false));
+}
+
+function promoteCard(direction) {
+  dragDelta = 0;
+  isAnimating = false;
+
+  if (direction === 1) {
+    cards.active.remove();
+    cards.prev.remove();
+    cards.active = cards.next;
+  } else {
+    cards.active.remove();
+    cards.next.remove();
+    cards.active = cards.prev;
+  }
+
+  cards.active.dataset.role = 'active';
+  cards.active.className = 'polaroid active no-transition';
+  cards.active.classList.remove('flipped');
+
+  cards.prev = createCard('prev');
+  cards.next = createCard('next');
+  fillCard(cards.prev, currentIndex - 1);
+  fillCard(cards.next, currentIndex + 1);
+
+  if (cards.prev.style.visibility !== 'hidden') {
+    track.insertBefore(cards.prev, cards.active);
+  }
+  if (cards.next.style.visibility !== 'hidden') {
+    track.appendChild(cards.next);
+  }
+
+  applyTransforms(true);
+
+  requestAnimationFrame(() => {
+    cardList().forEach((card) => card?.classList.remove('no-transition'));
+  });
+
+  updateUI();
+  preloadAdjacent();
 }
 
 function scheduleTransform() {
@@ -262,10 +322,8 @@ function animateDragTo(target, onComplete) {
   });
 }
 
-function finishSlide() {
-  dragDelta = 0;
-  isAnimating = false;
-  refreshCards();
+function finishSlide(direction) {
+  promoteCard(direction);
 }
 
 function slideTo(direction) {
@@ -275,7 +333,7 @@ function slideTo(direction) {
 
   animateDragTo(-direction * SPREAD, () => {
     currentIndex += direction;
-    finishSlide();
+    finishSlide(direction);
   });
 }
 
