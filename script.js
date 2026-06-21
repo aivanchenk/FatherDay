@@ -158,7 +158,7 @@ function createCard(role) {
   `;
 
   card.addEventListener('pointerup', () => {
-    if (role !== 'active' || hasMoved || isAnimating) return;
+    if (card.dataset.role !== 'active' || hasMoved || isAnimating) return;
     card.classList.toggle('flipped');
   });
 
@@ -197,7 +197,7 @@ function cardStyle(xOffset) {
     x: xOffset,
     scale: 1 - t * 0.08,
     rotate: (xOffset / SPREAD) * 5,
-    opacity: 1 - t * 0.5,
+    opacity: 0.55 + (1 - t) * 0.45,
     zIndex: Math.round((1 - t) * 10)
   };
 }
@@ -222,6 +222,7 @@ function applyTransforms(noTransition) {
       return;
     }
 
+    card.style.visibility = 'visible';
     const { x, scale, rotate, opacity, zIndex } = cardStyle(offsets[role]);
     card.style.transform = `translate(calc(-50% + ${x}px), -50%) rotate(${rotate}deg) scale(${scale})`;
     card.style.opacity = String(opacity);
@@ -261,40 +262,52 @@ function refreshCards() {
   requestAnimationFrame(() => applyTransforms(false));
 }
 
+function setCardRole(card, role) {
+  card.dataset.role = role;
+  card.className = `polaroid ${role}`;
+}
+
 function promoteCard(direction) {
-  dragDelta = 0;
   isAnimating = false;
 
+  const oldActive = cards.active;
+  const oldPrev = cards.prev;
+  const oldNext = cards.next;
+
   if (direction === 1) {
-    cards.active.remove();
-    cards.prev.remove();
-    cards.active = cards.next;
+    cards.active = oldNext;
+    cards.prev = oldActive;
+    cards.next = oldPrev;
   } else {
-    cards.active.remove();
-    cards.next.remove();
-    cards.active = cards.prev;
+    cards.active = oldPrev;
+    cards.next = oldActive;
+    cards.prev = oldNext;
   }
 
-  cards.active.dataset.role = 'active';
-  cards.active.className = 'polaroid active no-transition';
+  setCardRole(cards.prev, 'prev');
+  setCardRole(cards.active, 'active');
+  setCardRole(cards.next, 'next');
   cards.active.classList.remove('flipped');
 
-  cards.prev = createCard('prev');
-  cards.next = createCard('next');
   fillCard(cards.prev, currentIndex - 1);
+  fillCard(cards.active, currentIndex);
   fillCard(cards.next, currentIndex + 1);
 
-  if (cards.prev.style.visibility !== 'hidden') {
-    track.insertBefore(cards.prev, cards.active);
-  }
-  if (cards.next.style.visibility !== 'hidden') {
-    track.appendChild(cards.next);
-  }
+  const recycled = direction === 1 ? cards.next : cards.prev;
+  dragDelta = 0;
 
+  cardList().forEach((card) => card?.classList.add('no-transition'));
+  if (recycled.style.visibility !== 'hidden') {
+    recycled.style.opacity = '0';
+  }
   applyTransforms(true);
 
   requestAnimationFrame(() => {
     cardList().forEach((card) => card?.classList.remove('no-transition'));
+    if (recycled.style.visibility !== 'hidden') {
+      recycled.style.opacity = '';
+    }
+    applyTransforms(false);
   });
 
   updateUI();
