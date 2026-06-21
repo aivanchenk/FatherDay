@@ -1,0 +1,5 @@
+.DS_Store
+assets/*.JPG
+assets/*.jpg
+assets/*.png
+!assets/thumbs/
