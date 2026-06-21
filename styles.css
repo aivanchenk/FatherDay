@@ -271,54 +271,42 @@ body {
   position: relative;
   width: 100%;
   height: 420px;
+  perspective: 1200px;
   overflow: visible;
-}
-
-.card-stack {
-  position: relative;
-  width: 100%;
-  height: 100%;
-}
-
-.card-layer {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: min(300px, 78vw);
-  transform: translate3d(-50%, -50%, 0);
-  transform-origin: center center;
-  will-change: transform;
-  backface-visibility: hidden;
   touch-action: none;
 }
 
-.card-layer.animating {
-  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.card-layer.dragging {
-  transition: none;
-}
-
-.card-under {
-  z-index: 1;
-  opacity: 0.5;
-  pointer-events: none;
-}
-
-.card-active {
-  z-index: 2;
+.polaroid {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(300px, 78vw);
+  transform: translate(-50%, -50%);
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.35s ease;
   cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  will-change: transform;
 }
 
-.card-active.dragging {
+.polaroid.no-transition,
+.polaroid.dragging {
+  transition: none;
   cursor: grabbing;
 }
 
-.polaroid {
-  position: relative;
+.polaroid.active {
+  z-index: 10;
+}
+
+.polaroid.prev,
+.polaroid.next {
+  z-index: 5;
+  pointer-events: none;
+}
+
+.polaroid .polaroid-inner {
   width: 100%;
-  cursor: pointer;
 }
 
 .polaroid-inner {

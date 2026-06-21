@@ -114,17 +114,16 @@ const photos = [
   }
 ];
 
+const SPREAD = 88;
+const SWIPE_THRESHOLD = 45;
+
 let currentIndex = 0;
-let dragX = 0;
-let startX = 0;
-let lastX = 0;
-let lastTime = 0;
-let velocityX = 0;
+let dragDelta = 0;
 let isDragging = false;
 let hasMoved = false;
 let isAnimating = false;
+let startX = 0;
 let rafId = null;
-let pointerId = null;
 
 const intro = document.getElementById('intro');
 const envelope = document.getElementById('envelope');
@@ -135,167 +134,159 @@ const counter = document.getElementById('counter');
 const prevBtn = document.getElementById('prevBtn');
 const nextBtn = document.getElementById('nextBtn');
 
-let cardStack = null;
+const cards = { prev: null, active: null, next: null };
+const cardList = () => [cards.prev, cards.active, cards.next];
 
-function cardHtml(photo, index) {
-  const pos = photo.objectPosition || 'center center';
-  const aspect = photo.aspectRatio || '1 / 1';
-  return `
-    <div class="polaroid">
-      <div class="polaroid-inner">
-        <div class="polaroid-front">
-          <img src="${photo.src}" alt="Спогад ${index + 1}" decoding="async" draggable="false"
-            style="object-position: ${pos}; aspect-ratio: ${aspect}">
-          <div class="polaroid-footer">
-            <span class="polaroid-caption">${photo.caption}</span>
-          </div>
+function createCard(role) {
+  const card = document.createElement('div');
+  card.className = `polaroid ${role}`;
+  card.dataset.role = role;
+  card.innerHTML = `
+    <div class="polaroid-inner">
+      <div class="polaroid-front">
+        <img alt="" decoding="async" draggable="false">
+        <div class="polaroid-footer">
+          <span class="polaroid-caption"></span>
         </div>
-        <div class="polaroid-back">
-          <p class="back-date">${formatDateUk(photo.date)}</p>
-          <p class="back-message">${photo.message}</p>
-          <span class="back-heart">💙</span>
-        </div>
+      </div>
+      <div class="polaroid-back">
+        <p class="back-date"></p>
+        <p class="back-message"></p>
+        <span class="back-heart">💙</span>
       </div>
     </div>
   `;
+
+  card.addEventListener('pointerup', () => {
+    if (role !== 'active' || hasMoved || isAnimating) return;
+    card.classList.toggle('flipped');
+  });
+
+  return card;
 }
 
-function swipeThreshold() {
-  return Math.min(track.offsetWidth * 0.18, 72);
+function fillCard(card, index) {
+  if (index < 0 || index >= photos.length) {
+    card.style.visibility = 'hidden';
+    card.dataset.index = '';
+    return;
+  }
+
+  const photo = photos[index];
+  card.style.visibility = 'visible';
+  card.dataset.index = index;
+  card.classList.remove('flipped');
+
+  const img = card.querySelector('img');
+  img.style.objectPosition = photo.objectPosition || 'center center';
+  img.style.aspectRatio = photo.aspectRatio || '1 / 1';
+
+  if (img.getAttribute('src') !== photo.src) {
+    img.src = photo.src;
+    img.alt = `Спогад ${index + 1}`;
+  }
+
+  card.querySelector('.polaroid-caption').textContent = photo.caption;
+  card.querySelector('.back-date').textContent = formatDateUk(photo.date);
+  card.querySelector('.back-message').textContent = photo.message;
 }
 
-function rubberBand(value, min, max) {
-  if (value > max) return max + (value - max) * 0.2;
-  if (value < min) return min + (value - min) * 0.2;
-  return value;
+function cardStyle(xOffset) {
+  const t = Math.min(Math.abs(xOffset) / SPREAD, 1);
+  return {
+    x: xOffset,
+    scale: 1 - t * 0.08,
+    rotate: (xOffset / SPREAD) * 5,
+    opacity: 1 - t * 0.5,
+    zIndex: Math.round((1 - t) * 10)
+  };
 }
 
-function cardTransform(x, rotate) {
-  return `translate3d(${x}px, 0, 0) translate3d(-50%, -50%, 0) rotate(${rotate}deg)`;
-}
+function applyTransforms(noTransition) {
+  const offsets = {
+    prev: -SPREAD + dragDelta,
+    active: dragDelta,
+    next: SPREAD + dragDelta
+  };
 
-function getActiveCard() {
-  return cardStack.querySelector('.card-active');
-}
+  cardList().forEach((card) => {
+    const role = card.dataset.role;
+    const hidden =
+      card.style.visibility === 'hidden' ||
+      (role === 'prev' && currentIndex === 0) ||
+      (role === 'next' && currentIndex === photos.length - 1);
 
-function getUnderCard() {
-  return cardStack.querySelector('.card-under');
-}
+    if (hidden) {
+      card.style.opacity = '0';
+      card.style.pointerEvents = 'none';
+      return;
+    }
 
-function attachFlipHandlers(layer) {
-  const polaroid = layer.querySelector('.polaroid');
-  polaroid.addEventListener('pointerup', () => {
-    if (hasMoved || isAnimating) return;
-    polaroid.classList.toggle('flipped');
+    const { x, scale, rotate, opacity, zIndex } = cardStyle(offsets[role]);
+    card.style.transform = `translate(calc(-50% + ${x}px), -50%) rotate(${rotate}deg) scale(${scale})`;
+    card.style.opacity = String(opacity);
+    card.style.zIndex = String(zIndex);
+    card.style.pointerEvents = role === 'active' ? 'auto' : 'none';
+    card.classList.toggle('no-transition', noTransition);
   });
 }
 
-function createCardLayer(index, role) {
-  const layer = document.createElement('div');
-  layer.className = `card-layer ${role}`;
-  layer.innerHTML = cardHtml(photos[index], index);
-  attachFlipHandlers(layer);
-  return layer;
+function refreshCards() {
+  fillCard(cards.prev, currentIndex - 1);
+  fillCard(cards.active, currentIndex);
+  fillCard(cards.next, currentIndex + 1);
+  applyTransforms(true);
+  updateUI();
+  preloadAdjacent();
+  requestAnimationFrame(() => applyTransforms(false));
 }
 
-function applyDrag(animate) {
-  const active = getActiveCard();
-  if (!active) return;
-
-  const rotate = dragX * 0.04;
-  active.classList.toggle('animating', animate);
-  active.classList.toggle('dragging', isDragging && !animate);
-  active.style.transform = cardTransform(dragX, rotate);
-}
-
-function scheduleDrag() {
+function scheduleTransform() {
   if (rafId) return;
   rafId = requestAnimationFrame(() => {
-    applyDrag(false);
+    applyTransforms(true);
     rafId = null;
   });
 }
 
-function addUnderCard(index) {
-  if (index >= photos.length || getUnderCard()) return;
-  cardStack.insertBefore(createCardLayer(index, 'card-under'), cardStack.firstChild);
-}
-
-function renderStack() {
-  cardStack.replaceChildren();
-  addUnderCard(currentIndex + 1);
-  cardStack.appendChild(createCardLayer(currentIndex, 'card-active'));
-  dragX = 0;
-  applyDrag(false);
-}
-
-function finishDismiss(direction) {
-  currentIndex += direction;
-
-  if (direction === 1) {
-    const active = getActiveCard();
-    const under = getUnderCard();
-    active?.remove();
-    if (under) {
-      under.className = 'card-layer card-active';
-      under.style.transform = '';
-      under.style.opacity = '';
-    }
-    addUnderCard(currentIndex + 1);
-  } else {
-    renderStack();
-  }
-
-  dragX = 0;
-  isAnimating = false;
-  applyDrag(false);
+function animateDragTo(target, onComplete) {
+  isAnimating = true;
+  dragDelta = target;
+  applyTransforms(false);
   updateUI();
-  preloadNext();
+
+  cards.active.addEventListener('transitionend', function done(e) {
+    if (e.propertyName !== 'transform') return;
+    cards.active.removeEventListener('transitionend', done);
+    onComplete();
+  });
 }
 
-function dismissCard(direction) {
+function finishSlide() {
+  dragDelta = 0;
+  isAnimating = false;
+  refreshCards();
+}
+
+function slideTo(direction) {
   if (isAnimating) return;
   if (direction === 1 && currentIndex >= photos.length - 1) return;
   if (direction === -1 && currentIndex <= 0) return;
 
-  isAnimating = true;
-  updateUI();
-
-  const active = getActiveCard();
-  const exitX = -direction * (track.offsetWidth + 100);
-  const exitRot = -direction * 15;
-
-  active.classList.remove('dragging');
-  active.classList.add('animating');
-  active.style.transform = cardTransform(exitX, exitRot);
-
-  let finished = false;
-  const done = () => {
-    if (finished) return;
-    finished = true;
-    finishDismiss(direction);
-  };
-
-  active.addEventListener('transitionend', (e) => {
-    if (e.propertyName === 'transform') done();
-  }, { once: true });
-  setTimeout(done, 380);
+  animateDragTo(-direction * SPREAD, () => {
+    currentIndex += direction;
+    finishSlide();
+  });
 }
 
-function snapBack() {
-  dragX = 0;
-  applyDrag(true);
-}
-
-function next() { dismissCard(1); }
-function prev() { dismissCard(-1); }
+function next() { slideTo(1); }
+function prev() { slideTo(-1); }
 
 function goTo(index) {
   if (index === currentIndex || isAnimating) return;
   currentIndex = index;
-  renderStack();
-  updateUI();
-  preloadNext();
+  dragDelta = 0;
+  refreshCards();
 }
 
 function updateUI() {
@@ -307,9 +298,9 @@ function updateUI() {
   nextBtn.disabled = currentIndex === photos.length - 1 || isAnimating;
 }
 
-function preloadNext() {
-  [currentIndex + 1, currentIndex + 2].forEach((i) => {
-    if (i < photos.length) {
+function preloadAdjacent() {
+  [currentIndex - 1, currentIndex + 1, currentIndex + 2].forEach((i) => {
+    if (i >= 0 && i < photos.length) {
       const img = new Image();
       img.src = photos[i].src;
     }
@@ -317,92 +308,59 @@ function preloadNext() {
 }
 
 function setupSwipe() {
-  const onStart = (x, id) => {
+  const onStart = (x) => {
     if (isAnimating) return;
     isDragging = true;
     hasMoved = false;
     startX = x;
-    lastX = x;
-    lastTime = performance.now();
-    velocityX = 0;
-    pointerId = id;
-
-    const active = getActiveCard();
-    if (active) {
-      active.classList.remove('animating');
-      active.classList.add('dragging');
-    }
+    cards.active.classList.add('dragging');
   };
 
   const onMove = (x) => {
     if (!isDragging || isAnimating) return;
+    dragDelta = x - startX;
+    if (Math.abs(dragDelta) > 6) hasMoved = true;
 
-    const now = performance.now();
-    const dt = now - lastTime;
-    if (dt > 0) velocityX = (x - lastX) / dt;
-    lastX = x;
-    lastTime = now;
+    if (currentIndex === 0 && dragDelta > 0) dragDelta *= 0.3;
+    if (currentIndex === photos.length - 1 && dragDelta < 0) dragDelta *= 0.3;
 
-    dragX = x - startX;
-    if (Math.abs(dragX) > 4) hasMoved = true;
-
-    const minX = currentIndex === 0 ? 0 : -Infinity;
-    const maxX = currentIndex === photos.length - 1 ? 0 : Infinity;
-    dragX = rubberBand(dragX, minX, maxX);
-
-    scheduleDrag();
+    scheduleTransform();
   };
 
   const onEnd = () => {
     if (!isDragging || isAnimating) return;
     isDragging = false;
-    pointerId = null;
+    cards.active.classList.remove('dragging');
 
-    const active = getActiveCard();
-    active?.classList.remove('dragging');
-
-    const threshold = swipeThreshold();
-    const flick = Math.abs(velocityX) > 0.4;
     const moved = hasMoved;
     hasMoved = false;
 
-    if (moved && (dragX < -threshold || (flick && velocityX < 0 && dragX < -20))) {
+    if (moved && dragDelta < -SWIPE_THRESHOLD && currentIndex < photos.length - 1) {
       next();
-    } else if (moved && (dragX > threshold || (flick && velocityX > 0 && dragX > 20))) {
+    } else if (moved && dragDelta > SWIPE_THRESHOLD && currentIndex > 0) {
       prev();
     } else {
-      snapBack();
+      animateDragTo(0, () => {
+        isAnimating = false;
+        updateUI();
+      });
     }
   };
 
-  track.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0) return;
-    track.setPointerCapture(e.pointerId);
-    onStart(e.clientX, e.pointerId);
-  });
+  track.addEventListener('mousedown', (e) => onStart(e.clientX));
+  window.addEventListener('mousemove', (e) => onMove(e.clientX));
+  window.addEventListener('mouseup', onEnd);
 
-  track.addEventListener('pointermove', (e) => {
-    if (e.pointerId !== pointerId) return;
-    onMove(e.clientX);
-  });
-
-  track.addEventListener('pointerup', (e) => {
-    if (e.pointerId !== pointerId) return;
-    track.releasePointerCapture(e.pointerId);
-    onEnd();
-  });
-
-  track.addEventListener('pointercancel', (e) => {
-    if (e.pointerId !== pointerId) return;
-    onEnd();
-  });
+  track.addEventListener('touchstart', (e) => onStart(e.touches[0].clientX), { passive: true });
+  track.addEventListener('touchmove', (e) => onMove(e.touches[0].clientX), { passive: true });
+  track.addEventListener('touchend', onEnd);
 }
 
 function buildGallery() {
-  cardStack = document.createElement('div');
-  cardStack.className = 'card-stack';
-  cardStack.id = 'cardStack';
-  track.appendChild(cardStack);
+  cards.prev = createCard('prev');
+  cards.active = createCard('active');
+  cards.next = createCard('next');
+  track.append(cards.prev, cards.active, cards.next);
 
   photos.forEach((_, i) => {
     const dot = document.createElement('button');
@@ -413,9 +371,7 @@ function buildGallery() {
   });
 
   setupSwipe();
-  renderStack();
-  updateUI();
-  preloadNext();
+  refreshCards();
 }
 
 envelope.addEventListener('click', () => {
