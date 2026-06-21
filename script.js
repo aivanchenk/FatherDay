@@ -137,6 +137,8 @@ const nextBtn = document.getElementById('nextBtn');
 const cards = { prev: null, active: null, next: null };
 const cardList = () => [cards.prev, cards.active, cards.next];
 
+let ignoreNextClick = false;
+
 function createCard(role) {
   const card = document.createElement('div');
   card.className = `polaroid ${role}`;
@@ -158,6 +160,10 @@ function createCard(role) {
   `;
 
   card.addEventListener('click', (e) => {
+    if (ignoreNextClick) {
+      ignoreNextClick = false;
+      return;
+    }
     if (card.dataset.role !== 'active' || isAnimating) return;
     e.stopPropagation();
     card.classList.toggle('flipped');
@@ -405,17 +411,18 @@ function preloadAdjacent() {
 
 function setupSwipe() {
   const onStart = (x) => {
-    if (isAnimating) return;
     isDragging = true;
     hasMoved = false;
     startX = x;
-    cards.active.classList.add('dragging');
   };
 
   const onMove = (x) => {
     if (!isDragging || isAnimating) return;
     dragDelta = x - startX;
-    if (Math.abs(dragDelta) > 6) hasMoved = true;
+    if (Math.abs(dragDelta) > 6) {
+      hasMoved = true;
+      cards.active.classList.add('dragging');
+    }
 
     if (currentIndex === 0 && dragDelta > 0) dragDelta *= 0.3;
     if (currentIndex === photos.length - 1 && dragDelta < 0) dragDelta *= 0.3;
@@ -424,21 +431,30 @@ function setupSwipe() {
   };
 
   const onEnd = () => {
-    if (!isDragging || isAnimating) return;
+    if (!isDragging) return;
     isDragging = false;
     cards.active.classList.remove('dragging');
 
-    if (hasMoved && dragDelta < -SWIPE_THRESHOLD && currentIndex < photos.length - 1) {
+    if (!hasMoved) {
+      hasMoved = false;
+      cards.active.classList.toggle('flipped');
+      ignoreNextClick = true;
+      return;
+    }
+
+    if (isAnimating) return;
+
+    if (dragDelta < -SWIPE_THRESHOLD && currentIndex < photos.length - 1) {
       hasMoved = false;
       next();
-    } else if (hasMoved && dragDelta > SWIPE_THRESHOLD && currentIndex > 0) {
+    } else if (dragDelta > SWIPE_THRESHOLD && currentIndex > 0) {
       hasMoved = false;
       prev();
-    } else if (hasMoved) {
-      hasMoved = false;
-      animateDragTo(0, updateUI);
     } else {
       hasMoved = false;
+      dragDelta = 0;
+      applyTransforms(false);
+      updateUI();
     }
   };
 
