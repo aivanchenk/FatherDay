@@ -117,9 +117,14 @@ const photos = [
 let currentIndex = 0;
 let dragX = 0;
 let startX = 0;
+let lastX = 0;
+let lastTime = 0;
+let velocityX = 0;
 let isDragging = false;
 let hasMoved = false;
 let isAnimating = false;
+let rafId = null;
+let pointerId = null;
 
 const intro = document.getElementById('intro');
 const envelope = document.getElementById('envelope');
@@ -156,7 +161,17 @@ function cardHtml(photo, index) {
 }
 
 function swipeThreshold() {
-  return Math.min(track.offsetWidth * 0.22, 90);
+  return Math.min(track.offsetWidth * 0.18, 72);
+}
+
+function rubberBand(value, min, max) {
+  if (value > max) return max + (value - max) * 0.2;
+  if (value < min) return min + (value - min) * 0.2;
+  return value;
+}
+
+function cardTransform(x, rotate) {
+  return `translate3d(${x}px, 0, 0) translate3d(-50%, -50%, 0) rotate(${rotate}deg)`;
 }
 
 function getActiveCard() {
@@ -167,50 +182,75 @@ function getUnderCard() {
   return cardStack.querySelector('.card-under');
 }
 
+function attachFlipHandlers(layer) {
+  const polaroid = layer.querySelector('.polaroid');
+  polaroid.addEventListener('pointerup', () => {
+    if (hasMoved || isAnimating) return;
+    polaroid.classList.toggle('flipped');
+  });
+}
+
+function createCardLayer(index, role) {
+  const layer = document.createElement('div');
+  layer.className = `card-layer ${role}`;
+  layer.innerHTML = cardHtml(photos[index], index);
+  attachFlipHandlers(layer);
+  return layer;
+}
+
 function applyDrag(animate) {
   const active = getActiveCard();
-  const under = getUnderCard();
   if (!active) return;
 
-  const rotate = dragX * 0.05;
+  const rotate = dragX * 0.04;
   active.classList.toggle('animating', animate);
-  active.style.transform = `translate(calc(-50% + ${dragX}px), -50%) rotate(${rotate}deg)`;
+  active.classList.toggle('dragging', isDragging && !animate);
+  active.style.transform = cardTransform(dragX, rotate);
+}
 
-  if (under) {
-    under.classList.toggle('animating', animate);
-    const t = Math.min(Math.abs(dragX) / swipeThreshold(), 1);
-    under.style.transform = `translate(-50%, calc(-50% + ${10 - t * 10}px)) scale(${0.93 + t * 0.07})`;
-    under.style.opacity = String(0.45 + t * 0.55);
-  }
+function scheduleDrag() {
+  if (rafId) return;
+  rafId = requestAnimationFrame(() => {
+    applyDrag(false);
+    rafId = null;
+  });
+}
+
+function addUnderCard(index) {
+  if (index >= photos.length || getUnderCard()) return;
+  cardStack.insertBefore(createCardLayer(index, 'card-under'), cardStack.firstChild);
 }
 
 function renderStack() {
-  cardStack.innerHTML = '';
-
-  if (currentIndex + 1 < photos.length) {
-    const under = document.createElement('div');
-    under.className = 'card-layer card-under';
-    under.innerHTML = cardHtml(photos[currentIndex + 1], currentIndex + 1);
-    cardStack.appendChild(under);
-  }
-
-  const active = document.createElement('div');
-  active.className = 'card-layer card-active';
-  active.innerHTML = cardHtml(photos[currentIndex], currentIndex);
-  cardStack.appendChild(active);
-
-  const polaroid = active.querySelector('.polaroid');
-  polaroid.addEventListener('mouseup', () => {
-    if (hasMoved || isAnimating) return;
-    polaroid.classList.toggle('flipped');
-  });
-  polaroid.addEventListener('touchend', () => {
-    if (hasMoved || isAnimating) return;
-    polaroid.classList.toggle('flipped');
-  });
-
+  cardStack.replaceChildren();
+  addUnderCard(currentIndex + 1);
+  cardStack.appendChild(createCardLayer(currentIndex, 'card-active'));
   dragX = 0;
   applyDrag(false);
+}
+
+function finishDismiss(direction) {
+  currentIndex += direction;
+
+  if (direction === 1) {
+    const active = getActiveCard();
+    const under = getUnderCard();
+    active?.remove();
+    if (under) {
+      under.className = 'card-layer card-active';
+      under.style.transform = '';
+      under.style.opacity = '';
+    }
+    addUnderCard(currentIndex + 1);
+  } else {
+    renderStack();
+  }
+
+  dragX = 0;
+  isAnimating = false;
+  applyDrag(false);
+  updateUI();
+  preloadNext();
 }
 
 function dismissCard(direction) {
@@ -219,21 +259,27 @@ function dismissCard(direction) {
   if (direction === -1 && currentIndex <= 0) return;
 
   isAnimating = true;
-  const active = getActiveCard();
-  const exitX = -direction * (track.offsetWidth + 80);
-  const exitRot = -direction * 18;
+  updateUI();
 
+  const active = getActiveCard();
+  const exitX = -direction * (track.offsetWidth + 100);
+  const exitRot = -direction * 15;
+
+  active.classList.remove('dragging');
   active.classList.add('animating');
-  active.style.transform = `translate(calc(-50% + ${exitX}px), -50%) rotate(${exitRot}deg)`;
+  active.style.transform = cardTransform(exitX, exitRot);
+
+  let finished = false;
+  const done = () => {
+    if (finished) return;
+    finished = true;
+    finishDismiss(direction);
+  };
 
   active.addEventListener('transitionend', (e) => {
-    if (e.propertyName !== 'transform') return;
-    currentIndex += direction;
-    isAnimating = false;
-    renderStack();
-    updateUI();
-    preloadNext();
+    if (e.propertyName === 'transform') done();
   }, { once: true });
+  setTimeout(done, 380);
 }
 
 function snapBack() {
@@ -271,50 +317,85 @@ function preloadNext() {
 }
 
 function setupSwipe() {
-  const onStart = (x) => {
+  const onStart = (x, id) => {
     if (isAnimating) return;
     isDragging = true;
     hasMoved = false;
     startX = x;
+    lastX = x;
+    lastTime = performance.now();
+    velocityX = 0;
+    pointerId = id;
+
     const active = getActiveCard();
-    if (active) active.classList.remove('animating');
+    if (active) {
+      active.classList.remove('animating');
+      active.classList.add('dragging');
+    }
   };
 
   const onMove = (x) => {
     if (!isDragging || isAnimating) return;
+
+    const now = performance.now();
+    const dt = now - lastTime;
+    if (dt > 0) velocityX = (x - lastX) / dt;
+    lastX = x;
+    lastTime = now;
+
     dragX = x - startX;
-    if (Math.abs(dragX) > 6) hasMoved = true;
+    if (Math.abs(dragX) > 4) hasMoved = true;
 
-    if (currentIndex === 0 && dragX > 0) dragX *= 0.25;
-    if (currentIndex === photos.length - 1 && dragX < 0) dragX *= 0.25;
+    const minX = currentIndex === 0 ? 0 : -Infinity;
+    const maxX = currentIndex === photos.length - 1 ? 0 : Infinity;
+    dragX = rubberBand(dragX, minX, maxX);
 
-    applyDrag(false);
+    scheduleDrag();
   };
 
   const onEnd = () => {
     if (!isDragging || isAnimating) return;
     isDragging = false;
+    pointerId = null;
+
+    const active = getActiveCard();
+    active?.classList.remove('dragging');
 
     const threshold = swipeThreshold();
+    const flick = Math.abs(velocityX) > 0.4;
     const moved = hasMoved;
     hasMoved = false;
 
-    if (moved && dragX < -threshold) {
+    if (moved && (dragX < -threshold || (flick && velocityX < 0 && dragX < -20))) {
       next();
-    } else if (moved && dragX > threshold) {
+    } else if (moved && (dragX > threshold || (flick && velocityX > 0 && dragX > 20))) {
       prev();
     } else {
       snapBack();
     }
   };
 
-  track.addEventListener('mousedown', (e) => onStart(e.clientX));
-  window.addEventListener('mousemove', (e) => onMove(e.clientX));
-  window.addEventListener('mouseup', onEnd);
+  track.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    track.setPointerCapture(e.pointerId);
+    onStart(e.clientX, e.pointerId);
+  });
 
-  track.addEventListener('touchstart', (e) => onStart(e.touches[0].clientX), { passive: true });
-  track.addEventListener('touchmove', (e) => onMove(e.touches[0].clientX), { passive: true });
-  track.addEventListener('touchend', onEnd);
+  track.addEventListener('pointermove', (e) => {
+    if (e.pointerId !== pointerId) return;
+    onMove(e.clientX);
+  });
+
+  track.addEventListener('pointerup', (e) => {
+    if (e.pointerId !== pointerId) return;
+    track.releasePointerCapture(e.pointerId);
+    onEnd();
+  });
+
+  track.addEventListener('pointercancel', (e) => {
+    if (e.pointerId !== pointerId) return;
+    onEnd();
+  });
 }
 
 function buildGallery() {

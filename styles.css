@@ -285,19 +285,24 @@ body {
   left: 50%;
   top: 50%;
   width: min(300px, 78vw);
-  transform: translate(-50%, -50%);
-  transform-origin: center bottom;
+  transform: translate3d(-50%, -50%, 0);
+  transform-origin: center center;
   will-change: transform;
+  backface-visibility: hidden;
+  touch-action: none;
 }
 
 .card-layer.animating {
-  transition: transform 0.3s ease-out, opacity 0.3s ease-out;
+  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.card-layer.dragging {
+  transition: none;
 }
 
 .card-under {
   z-index: 1;
-  transform: translate(-50%, -50%) scale(0.93) translateY(10px);
-  opacity: 0.45;
+  opacity: 0.5;
   pointer-events: none;
 }
 
@@ -306,7 +311,7 @@ body {
   cursor: grab;
 }
 
-.card-active:active {
+.card-active.dragging {
   cursor: grabbing;
 }
 
