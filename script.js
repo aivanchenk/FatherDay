@@ -157,8 +157,9 @@ function createCard(role) {
     </div>
   `;
 
-  card.addEventListener('pointerup', () => {
-    if (card.dataset.role !== 'active' || hasMoved || isAnimating) return;
+  card.addEventListener('click', (e) => {
+    if (card.dataset.role !== 'active' || isAnimating) return;
+    e.stopPropagation();
     card.classList.toggle('flipped');
   });
 
@@ -226,10 +227,21 @@ function applyTransforms(noTransition) {
     const { x, scale, rotate, opacity, zIndex } = cardStyle(offsets[role]);
     card.style.transform = `translate(calc(-50% + ${x}px), -50%) rotate(${rotate}deg) scale(${scale})`;
     card.style.opacity = String(opacity);
-    card.style.zIndex = String(zIndex);
+    card.style.zIndex = role === 'active' ? '10' : String(zIndex);
     card.style.pointerEvents = role === 'active' ? 'auto' : 'none';
     card.classList.toggle('no-transition', noTransition);
   });
+}
+
+function reorderDom() {
+  cardList().forEach((card) => {
+    if (card?.isConnected && card.style.visibility !== 'hidden') {
+      track.appendChild(card);
+    }
+  });
+  if (cards.active?.isConnected) {
+    track.appendChild(cards.active);
+  }
 }
 
 function mountCards() {
@@ -249,6 +261,7 @@ function mountCards() {
   if (cards.next?.style.visibility !== 'hidden' && cards.next) {
     track.appendChild(cards.next);
   }
+  reorderDom();
 }
 
 function refreshCards() {
@@ -308,6 +321,7 @@ function promoteCard(direction) {
       recycled.style.opacity = '';
     }
     applyTransforms(false);
+    reorderDom();
   });
 
   updateUI();
@@ -323,16 +337,32 @@ function scheduleTransform() {
 }
 
 function animateDragTo(target, onComplete) {
+  if (Math.abs(target - dragDelta) < 1) {
+    dragDelta = target;
+    if (onComplete) onComplete();
+    return;
+  }
+
   isAnimating = true;
   dragDelta = target;
   applyTransforms(false);
   updateUI();
 
-  cards.active.addEventListener('transitionend', function done(e) {
+  let finished = false;
+  const done = () => {
+    if (finished) return;
+    finished = true;
+    isAnimating = false;
+    if (onComplete) onComplete();
+  };
+
+  cards.active.addEventListener('transitionend', function onDone(e) {
     if (e.propertyName !== 'transform') return;
-    cards.active.removeEventListener('transitionend', done);
-    onComplete();
+    cards.active.removeEventListener('transitionend', onDone);
+    done();
   });
+
+  setTimeout(done, 400);
 }
 
 function finishSlide(direction) {
@@ -403,18 +433,17 @@ function setupSwipe() {
     isDragging = false;
     cards.active.classList.remove('dragging');
 
-    const moved = hasMoved;
-    hasMoved = false;
-
-    if (moved && dragDelta < -SWIPE_THRESHOLD && currentIndex < photos.length - 1) {
+    if (hasMoved && dragDelta < -SWIPE_THRESHOLD && currentIndex < photos.length - 1) {
+      hasMoved = false;
       next();
-    } else if (moved && dragDelta > SWIPE_THRESHOLD && currentIndex > 0) {
+    } else if (hasMoved && dragDelta > SWIPE_THRESHOLD && currentIndex > 0) {
+      hasMoved = false;
       prev();
+    } else if (hasMoved) {
+      hasMoved = false;
+      animateDragTo(0, updateUI);
     } else {
-      animateDragTo(0, () => {
-        isAnimating = false;
-        updateUI();
-      });
+      hasMoved = false;
     }
   };
 
