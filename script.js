@@ -192,13 +192,13 @@ function fillCard(card, index) {
   card.querySelector('.back-message').textContent = photo.message;
 }
 
-function cardStyle(xOffset) {
+function cardStyle(xOffset, role) {
   const t = Math.min(Math.abs(xOffset) / SPREAD, 1);
   return {
     x: xOffset,
     scale: 1 - t * 0.08,
     rotate: (xOffset / SPREAD) * 5,
-    opacity: 0.55 + (1 - t) * 0.45,
+    filter: role === 'active' ? 'none' : `brightness(${0.86 + (1 - t) * 0.14})`,
     zIndex: Math.round((1 - t) * 10)
   };
 }
@@ -219,14 +219,16 @@ function applyTransforms(noTransition) {
 
     if (hidden) {
       card.style.opacity = '0';
+      card.style.filter = 'none';
       card.style.pointerEvents = 'none';
       return;
     }
 
     card.style.visibility = 'visible';
-    const { x, scale, rotate, opacity, zIndex } = cardStyle(offsets[role]);
+    const { x, scale, rotate, filter, zIndex } = cardStyle(offsets[role], role);
     card.style.transform = `translate(calc(-50% + ${x}px), -50%) rotate(${rotate}deg) scale(${scale})`;
-    card.style.opacity = String(opacity);
+    card.style.opacity = '1';
+    card.style.filter = filter;
     card.style.zIndex = role === 'active' ? '10' : String(zIndex);
     card.style.pointerEvents = role === 'active' ? 'auto' : 'none';
     card.classList.toggle('no-transition', noTransition);
@@ -306,20 +308,13 @@ function promoteCard(direction) {
   fillCard(cards.active, currentIndex);
   fillCard(cards.next, currentIndex + 1);
 
-  const recycled = direction === 1 ? cards.next : cards.prev;
   dragDelta = 0;
 
   cardList().forEach((card) => card?.classList.add('no-transition'));
-  if (recycled.style.visibility !== 'hidden') {
-    recycled.style.opacity = '0';
-  }
   applyTransforms(true);
 
   requestAnimationFrame(() => {
     cardList().forEach((card) => card?.classList.remove('no-transition'));
-    if (recycled.style.visibility !== 'hidden') {
-      recycled.style.opacity = '';
-    }
     applyTransforms(false);
     reorderDom();
   });
