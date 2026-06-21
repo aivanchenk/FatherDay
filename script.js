@@ -122,8 +122,6 @@ let dragDelta = 0;
 let isDragging = false;
 let hasMoved = false;
 let isAnimating = false;
-let slideFadeOut = false;
-const fadeInCards = new WeakSet();
 let startX = 0;
 let rafId = null;
 
@@ -206,11 +204,14 @@ function cardStyle(xOffset) {
   };
 }
 
-function cardOpacity(role, xOffset, hidden) {
-  if (hidden) return 0;
-  if (slideFadeOut && role === 'active') {
-    const t = Math.min(Math.abs(xOffset) / SPREAD, 1);
-    return Math.max(0, 1 - t);
+function cardOpacity(role, xOffset) {
+  if (role === 'prev' && xOffset < -SPREAD) {
+    const excess = Math.min((-SPREAD - xOffset) / SPREAD, 1);
+    return 1 - excess;
+  }
+  if (role === 'next' && xOffset > SPREAD) {
+    const excess = Math.min((xOffset - SPREAD) / SPREAD, 1);
+    return 1 - excess;
   }
   return 1;
 }
@@ -239,9 +240,7 @@ function applyTransforms(noTransition) {
     card.style.visibility = 'visible';
     const { x, scale, rotate, filter, zIndex } = cardStyle(offsets[role]);
     card.style.transform = `translate(calc(-50% + ${x}px), -50%) rotate(${rotate}deg) scale(${scale})`;
-    card.style.opacity = fadeInCards.has(card)
-      ? '0'
-      : String(cardOpacity(role, offsets[role], false));
+    card.style.opacity = String(cardOpacity(role, offsets[role]));
     card.style.filter = filter;
     card.style.zIndex = role === 'active' ? '10' : String(zIndex);
     card.style.pointerEvents = role === 'active' ? 'auto' : 'none';
@@ -311,11 +310,6 @@ function promoteCard(direction) {
   fillCard(cards.active, currentIndex);
   fillCard(cards.next, currentIndex + 1);
 
-  const recycled = direction === 1 ? cards.next : cards.prev;
-  if (recycled?.style.visibility !== 'hidden') {
-    fadeInCards.add(recycled);
-  }
-
   dragDelta = 0;
   mountCards();
 
@@ -324,9 +318,6 @@ function promoteCard(direction) {
 
   requestAnimationFrame(() => {
     cardList().forEach((card) => card?.classList.remove('no-transition'));
-    if (recycled?.style.visibility !== 'hidden') {
-      fadeInCards.delete(recycled);
-    }
     applyTransforms(false);
     reorderDom();
   });
@@ -351,7 +342,6 @@ function animateDragTo(target, onComplete) {
   }
 
   isAnimating = true;
-  slideFadeOut = Math.abs(target) >= SPREAD - 1;
   dragDelta = target;
   applyTransforms(false);
   updateUI();
@@ -361,7 +351,6 @@ function animateDragTo(target, onComplete) {
     if (finished) return;
     finished = true;
     isAnimating = false;
-    slideFadeOut = false;
     if (onComplete) onComplete();
   };
 
