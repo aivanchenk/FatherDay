@@ -137,8 +137,6 @@ const nextBtn = document.getElementById('nextBtn');
 const cards = { prev: null, active: null, next: null };
 const cardList = () => [cards.prev, cards.active, cards.next];
 
-let ignoreNextClick = false;
-
 function createCard(role) {
   const card = document.createElement('div');
   card.className = `polaroid ${role}`;
@@ -160,10 +158,6 @@ function createCard(role) {
   `;
 
   card.addEventListener('click', (e) => {
-    if (ignoreNextClick) {
-      ignoreNextClick = false;
-      return;
-    }
     if (card.dataset.role !== 'active' || isAnimating) return;
     e.stopPropagation();
     card.classList.toggle('flipped');
@@ -198,13 +192,14 @@ function fillCard(card, index) {
   card.querySelector('.back-message').textContent = photo.message;
 }
 
-function cardStyle(xOffset, role) {
+function cardStyle(xOffset) {
   const t = Math.min(Math.abs(xOffset) / SPREAD, 1);
+  const isFocused = t < 0.2;
   return {
     x: xOffset,
     scale: 1 - t * 0.08,
     rotate: (xOffset / SPREAD) * 5,
-    filter: role === 'active' ? 'none' : `brightness(${0.86 + (1 - t) * 0.14})`,
+    filter: isFocused ? 'none' : `brightness(${0.86 + (1 - t) * 0.14})`,
     zIndex: Math.round((1 - t) * 10)
   };
 }
@@ -231,7 +226,7 @@ function applyTransforms(noTransition) {
     }
 
     card.style.visibility = 'visible';
-    const { x, scale, rotate, filter, zIndex } = cardStyle(offsets[role], role);
+    const { x, scale, rotate, filter, zIndex } = cardStyle(offsets[role]);
     card.style.transform = `translate(calc(-50% + ${x}px), -50%) rotate(${rotate}deg) scale(${scale})`;
     card.style.opacity = '1';
     card.style.filter = filter;
@@ -254,21 +249,10 @@ function reorderDom() {
 
 function mountCards() {
   cardList().forEach((card) => {
-    if (!card) return;
-    if (card.style.visibility === 'hidden') {
-      card.remove();
+    if (card && !card.isConnected) {
+      track.appendChild(card);
     }
   });
-
-  if (cards.prev?.style.visibility !== 'hidden' && cards.prev) {
-    track.insertBefore(cards.prev, cards.active);
-  }
-  if (cards.active && !cards.active.isConnected) {
-    track.appendChild(cards.active);
-  }
-  if (cards.next?.style.visibility !== 'hidden' && cards.next) {
-    track.appendChild(cards.next);
-  }
   reorderDom();
 }
 
@@ -315,6 +299,7 @@ function promoteCard(direction) {
   fillCard(cards.next, currentIndex + 1);
 
   dragDelta = 0;
+  mountCards();
 
   cardList().forEach((card) => card?.classList.add('no-transition'));
   applyTransforms(true);
@@ -411,18 +396,17 @@ function preloadAdjacent() {
 
 function setupSwipe() {
   const onStart = (x) => {
+    if (isAnimating) return;
     isDragging = true;
     hasMoved = false;
     startX = x;
+    cards.active.classList.add('dragging');
   };
 
   const onMove = (x) => {
     if (!isDragging || isAnimating) return;
     dragDelta = x - startX;
-    if (Math.abs(dragDelta) > 6) {
-      hasMoved = true;
-      cards.active.classList.add('dragging');
-    }
+    if (Math.abs(dragDelta) > 6) hasMoved = true;
 
     if (currentIndex === 0 && dragDelta > 0) dragDelta *= 0.3;
     if (currentIndex === photos.length - 1 && dragDelta < 0) dragDelta *= 0.3;
@@ -431,30 +415,21 @@ function setupSwipe() {
   };
 
   const onEnd = () => {
-    if (!isDragging) return;
+    if (!isDragging || isAnimating) return;
     isDragging = false;
     cards.active.classList.remove('dragging');
 
-    if (!hasMoved) {
-      hasMoved = false;
-      cards.active.classList.toggle('flipped');
-      ignoreNextClick = true;
-      return;
-    }
-
-    if (isAnimating) return;
-
-    if (dragDelta < -SWIPE_THRESHOLD && currentIndex < photos.length - 1) {
+    if (hasMoved && dragDelta < -SWIPE_THRESHOLD && currentIndex < photos.length - 1) {
       hasMoved = false;
       next();
-    } else if (dragDelta > SWIPE_THRESHOLD && currentIndex > 0) {
+    } else if (hasMoved && dragDelta > SWIPE_THRESHOLD && currentIndex > 0) {
       hasMoved = false;
       prev();
+    } else if (hasMoved) {
+      hasMoved = false;
+      animateDragTo(0, updateUI);
     } else {
       hasMoved = false;
-      dragDelta = 0;
-      applyTransforms(false);
-      updateUI();
     }
   };
 
